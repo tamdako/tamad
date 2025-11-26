@@ -75,6 +75,14 @@ export const getJpegOrientation = (buf: any): number => {
   } catch (_e) {}
   return 1;
 };
+const SAMPLE_RADIUS_RATIO = 0.08;
+const MIN_SAMPLE_RADIUS = 4;
+const computeSampleHalf = (w: number, h: number): number => {
+  if (!w || !h) return MIN_SAMPLE_RADIUS;
+  const minDim = Math.min(w, h);
+  if (!isFinite(minDim) || minDim <= 0) return MIN_SAMPLE_RADIUS;
+  return Math.max(MIN_SAMPLE_RADIUS, Math.round(minDim * SAMPLE_RADIUS_RATIO));
+};
 export const hexToRgb = (hex: string): number[] => {
   if (!hex) return [0,0,0];
   let h = hex.trim();
@@ -95,7 +103,7 @@ export const decodeJpegAndSampleCenter = (base64: string): { r:number,g:number,b
     if (!decoded || !decoded.width || !decoded.data) return null;
     const w = decoded.width; const h = decoded.height; const data = decoded.data;
     const cx = Math.floor(w/2); const cy = Math.floor(h/2);
-    const half = 4;
+    const half = computeSampleHalf(w, h);
     let rSum=0,gSum=0,bSum=0,count=0;
     for (let yy = Math.max(0, cy-half); yy <= Math.min(h-1, cy+half); yy++) {
       for (let xx = Math.max(0, cx-half); xx <= Math.min(w-1, cx+half); xx++) {
@@ -123,7 +131,7 @@ export function decodeJpegAndSampleAt(base64: string, relX: number, relY: number
     if (!pw || !ph) return decodeJpegAndSampleCenter(base64);
     const ix = Math.max(0, Math.min(w - 1, Math.round((relX / pw) * w)));
     const iy = Math.max(0, Math.min(h - 1, Math.round((relY / ph) * h)));
-    const half = 4;
+    const half = computeSampleHalf(w, h);
     let rSum=0,gSum=0,bSum=0,count=0;
     for (let yy = Math.max(0, iy-half); yy <= Math.min(h-1, iy+half); yy++) {
       for (let xx = Math.max(0, ix-half); xx <= Math.min(w-1, ix+half); xx++) {
@@ -192,16 +200,6 @@ export async function mapPressToPreviewCoords(e: any, previewRef: any, previewLa
     const appliedDy = Math.max(-40, Math.min(40, Math.round(entry.dy)));
     const correctedX = Math.max(0, Math.min(pw, relX + appliedDx));
     const correctedY = Math.max(0, Math.min(ph, relY + appliedDy));
-    try {
-      const observedDx = (typeof locX === 'number' && !isOutside) ? (pageX - px - locX) : (pageX - px - relX);
-      const observedDy = (typeof locY === 'number' && !isOutside) ? (pageY - py - locY) : (pageY - py - relY);
-      if (Math.abs(observedDx) < 200 && Math.abs(observedDy) < 200) {
-        const alpha = 0.08;
-        entry.dx = entry.dx * (1 - alpha) + observedDx * alpha;
-        entry.dy = entry.dy * (1 - alpha) + observedDy * alpha;
-        entry.count = (entry.count || 0) + 1;
-      }
-    } catch (_e) {}
     return { relX: Math.round(correctedX), relY: Math.round(correctedY) };
   } catch (_e) { return { relX: Math.round(relX), relY: Math.round(relY) }; }
 }
@@ -226,5 +224,26 @@ export function mapLocalPressToPreviewCoords(e: any, previewLayoutRef: { current
     return { relX: Math.round(correctedX), relY: Math.round(correctedY) };
   } catch (_e) {
     return { relX: 0, relY: 0 };
+  }
+}
+
+export function normalizeBrightnessICtCp(rgb: { r: number; g: number; b: number }): { r: number; g: number; b: number } {
+  try {
+    const Color = require('colorjs.io');
+    const sr = Math.max(0, Math.min(1, rgb.r / 255));
+    const sg = Math.max(0, Math.min(1, rgb.g / 255));
+    const sb = Math.max(0, Math.min(1, rgb.b / 255));
+    const c = new Color('srgb', [sr, sg, sb]).to('ictcp');
+    const I = (c && Array.isArray(c.coords) && typeof c.coords[0] === 'number') ? c.coords[0] : 0.0;
+    const target = 0.5;
+    const eps = 1e-6;
+    let scale = target / Math.max(eps, I);
+    scale = Math.max(0.6, Math.min(1.6, scale));
+    const outR = Math.max(0, Math.min(255, Math.round(rgb.r * scale)));
+    const outG = Math.max(0, Math.min(255, Math.round(rgb.g * scale)));
+    const outB = Math.max(0, Math.min(255, Math.round(rgb.b * scale)));
+    return { r: outR, g: outG, b: outB };
+  } catch (_e) {
+    return rgb;
   }
 }

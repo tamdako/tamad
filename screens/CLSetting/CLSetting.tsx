@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Alert, Switch, ScrollView, Image } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ICONS } from '../../Images';
 import { styles } from './CLSetting.styles';
@@ -9,16 +9,28 @@ interface CLSettingProps {
   voiceEnabled?: boolean;
   colorCodesVisible?: boolean;
   voiceMode?: 'family' | 'real' | 'disable';
-  
   onToggleColorCodes?: (v:boolean)=>void;
   onNavigateToYT?: ()=>void;
+  onNavigateToAbout?: ()=>void;
   onChangeVoiceMode?: (m:'family'|'real'|'disable')=>void;
   showFamily?: boolean;
   showRealName?: boolean;
   onToggleShowFamily?: (v:boolean)=>void;
   onToggleShowRealName?: (v:boolean)=>void;
 }
-const CLSetting: React.FC<CLSettingProps> = ({ onBack, colorCodesVisible=true, voiceMode='family', onToggleColorCodes, onNavigateToYT, onChangeVoiceMode, showFamily=true, showRealName=true, onToggleShowFamily, onToggleShowRealName }) => {
+const CLSetting: React.FC<CLSettingProps> = ({
+  onBack,
+  colorCodesVisible = true,
+  voiceMode = 'family',
+  onToggleColorCodes,
+  onNavigateToYT,
+  onNavigateToAbout,
+  onChangeVoiceMode,
+  showFamily = true,
+  showRealName = true,
+  onToggleShowFamily,
+  onToggleShowRealName,
+}) => {
   const insets = useSafeAreaInsets();
   const [localColorCodesVisible, setLocalColorCodesVisible] = useState<boolean>(colorCodesVisible);
   const [localVoiceMode, setLocalVoiceMode] = useState<'family'|'real'|'disable'>(voiceMode);
@@ -34,56 +46,129 @@ const CLSetting: React.FC<CLSettingProps> = ({ onBack, colorCodesVisible=true, v
     onChangeVoiceMode && onChangeVoiceMode(localVoiceMode);
     onBack();
   };
+
+  const TogglePill = ({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) => (
+    <TouchableOpacity
+      style={[
+        styles.togglePill,
+        value ? styles.togglePillOn : styles.togglePillOff,
+        value ? styles.togglePillOnDirection : styles.togglePillOffDirection,
+      ]}
+      activeOpacity={0.8}
+      onPress={() => onChange(!value)}
+    >
+      <Text style={[styles.toggleText, value ? styles.toggleTextOn : styles.toggleTextOff]}>
+        {value ? 'ON' : 'OFF'}
+      </Text>
+      <View style={[styles.toggleThumb, value ? styles.toggleThumbOn : styles.toggleThumbOff]} />
+    </TouchableOpacity>
+  );
+
+  const renderVoiceLabel = () => {
+    if (localVoiceMode === 'family') return 'Family Color';
+    if (localVoiceMode === 'real') return 'Color Name';
+    return 'Disabled';
+  };
+
   return (
-  <View style={[styles.container, { paddingTop: insets.top || 0, paddingBottom: insets.bottom || 0 }]}> 
-  <TouchableOpacity onPress={saveAndBack} style={styles.backButton} hitSlop={{ top: 10, left: 10, bottom: 10, right: 10 }}>
-    <Image source={ICONS.ARROWicon} style={styles.backIconImage} />
-  </TouchableOpacity>
+    <View style={[styles.container, { paddingTop: insets.top || 0, paddingBottom: insets.bottom || 0 }]}>
+      <View style={styles.header}>
+        <TouchableOpacity
+          onPress={saveAndBack}
+          style={styles.backButton}
+          hitSlop={{ top: 10, left: 10, bottom: 10, right: 10 }}
+        >
+          <Image source={ICONS.ARROWicon} style={styles.backIconImage} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Settings</Text>
+      </View>
+
       <ScrollView contentContainerStyle={styles.contentContainer} style={styles.scrollView}>
-        <Text style={styles.title}>Settings</Text>
-
-        <View style={styles.row}>
-          <View style={styles.rowLeft}>
-            <Text style={styles.label}>Display Hex Color Codes</Text>
-            <Text style={styles.note}>on by default</Text>
-                
+        <View style={styles.settingCard}>
+          <View style={styles.settingTextWrap}>
+            <Text style={styles.settingTitle}>Hex Display</Text>
+            <Text style={styles.settingSubtitle}>e.g., #FF5733</Text>
           </View>
-          <Switch value={localColorCodesVisible} onValueChange={(v)=>{ setLocalColorCodesVisible(v); onToggleColorCodes && onToggleColorCodes(v); }} />
+          <TogglePill
+            value={localColorCodesVisible}
+            onChange={(v) => {
+              setLocalColorCodesVisible(v);
+              onToggleColorCodes && onToggleColorCodes(v);
+            }}
+          />
         </View>
 
-        <View style={styles.row}>
-          <View style={styles.rowLeft}>
-            <Text style={styles.label}>Display Family Color</Text>
-            <Text style={styles.note}>on by default</Text>
+        <View style={styles.settingCard}>
+          <View style={styles.settingTextWrap}>
+            <Text style={styles.settingTitle}>Color Family Display</Text>
+            <Text style={styles.settingSubtitle}>e.g., Red, Blue, Pink</Text>
           </View>
-          <Switch value={localShowFamily} onValueChange={(v)=>{ setLocalShowFamily(v); onToggleShowFamily && onToggleShowFamily(v); }} />
+          <TogglePill
+            value={localShowFamily}
+            onChange={(v) => {
+              setLocalShowFamily(v);
+              onToggleShowFamily && onToggleShowFamily(v);
+            }}
+          />
         </View>
 
-        <View style={styles.row}>
-          <View style={styles.rowLeft}>
-            <Text style={styles.label}>Display the real name of color</Text>
-            <Text style={styles.note}>on by default</Text>
+        <View style={styles.settingCard}>
+          <View style={styles.settingTextWrap}>
+            <Text style={styles.settingTitle}>Color Name Display</Text>
+            <Text style={styles.settingSubtitle}>e.g., Cerulean, Vermillion</Text>
           </View>
-          <Switch value={localShowRealName} onValueChange={(v)=>{ setLocalShowRealName(v); onToggleShowRealName && onToggleShowRealName(v); }} />
+          <TogglePill
+            value={localShowRealName}
+            onChange={(v) => {
+              setLocalShowRealName(v);
+              onToggleShowRealName && onToggleShowRealName(v);
+            }}
+          />
         </View>
-        
-  <View style={styles.voiceSection}>
-          <Text style={styles.label}>Say the color</Text>
-          <Text style={styles.note}>selected: {localVoiceMode === 'family' ? 'Family Color' : localVoiceMode === 'real' ? 'Real Name' : 'Disabled'}</Text>
+
+        <View style={styles.voiceSection}>
+          <Text style={styles.voiceLabel}>Voice Feedback</Text>
+          <Text style={styles.voiceHint}>Speak color as:</Text>
+
           <View style={styles.voiceDropdownWrap}>
-            <TouchableOpacity style={styles.dropdownButton} onPress={()=>setDropdownOpen(v=>!v)}>
-              <Text style={styles.dropdownButtonText}>{localVoiceMode === 'family' ? 'Family Color' : localVoiceMode === 'real' ? 'Real Name' : 'Disabled'}</Text>
+            <TouchableOpacity
+              style={styles.dropdownButton}
+              onPress={() => setDropdownOpen((v) => !v)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.dropdownButtonText}>{renderVoiceLabel()}</Text>
               <Text style={styles.caret}>{dropdownOpen ? '▲' : '▾'}</Text>
             </TouchableOpacity>
             {dropdownOpen && (
               <View style={styles.dropdownMenu}>
-                <TouchableOpacity style={styles.dropdownItem} onPress={() => { setLocalVoiceMode('family'); onChangeVoiceMode && onChangeVoiceMode('family'); setDropdownOpen(false); }}>
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setLocalVoiceMode('family');
+                    onChangeVoiceMode && onChangeVoiceMode('family');
+                    setDropdownOpen(false);
+                  }}
+                >
                   <Text style={styles.dropdownItemText}>Family Color</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.dropdownItem} onPress={() => { setLocalVoiceMode('real'); onChangeVoiceMode && onChangeVoiceMode('real'); setDropdownOpen(false); }}>
-                  <Text style={styles.dropdownItemText}>Real Name</Text>
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setLocalVoiceMode('real');
+                    onChangeVoiceMode && onChangeVoiceMode('real');
+                    setDropdownOpen(false);
+                  }}
+                >
+                  <Text style={styles.dropdownItemText}>Color Name</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.dropdownItem} onPress={() => { setLocalVoiceMode('disable'); onChangeVoiceMode && onChangeVoiceMode('disable'); setDropdownOpen(false); }}>
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setLocalVoiceMode('disable');
+                    onChangeVoiceMode && onChangeVoiceMode('disable');
+                    setDropdownOpen(false);
+                  }}
+                >
                   <Text style={styles.dropdownItemText}>Disable</Text>
                 </TouchableOpacity>
               </View>
@@ -93,46 +178,13 @@ const CLSetting: React.FC<CLSettingProps> = ({ onBack, colorCodesVisible=true, v
       </ScrollView>
 
       <View style={styles.fabContainer}>
-        
         {fabOpen && (
           <View style={styles.fabSubmenu}>
             <TouchableOpacity
               style={styles.fabSubmenuItem}
               onPress={() => {
                 setFabOpen(false);
-                Alert.alert(
-                  'About ColorLens',
-                  `🎨 ColorLens is a lightweight color detection tool that lets you identify colors in the real world or from photos.
-📷 Use your device camera for live scanning or 📁 upload an image — then tap to detect the color.
-The app shows the hex code, color family, and the actual name of the color, and can even 🔊 speak the result aloud for accessibility.
-
-🖼️ When you upload a photo, you can enter Adjust mode to move the image so the area you want to detect sits under the crosshair 🎯.
-✅ Tap Done to lock the image, then tap to detect colors.
-
-🔒 All sampling is performed locally on your device — images are not uploaded to any server by default.
-
-✨ Key Features:
-
-📸 Live camera sampling
-
-🖼️ Upload & pan/adjust images
-
-🧾 Hex code display
-
-🧩 Color family & name detection
-
-🔈 Optional voice feedback for accessibility
-
-🔐 Privacy & Permissions:
-
-Camera and photo library access are required only for their respective features.
-Your images and sampling data are processed entirely on-device and are never shared.
-
-💬 Support & Feedback:
-
-For bug reports, feature requests, or help, contact us at:
-📧 colorlens@supportteam.com`
-                );
+                onNavigateToAbout && onNavigateToAbout();
               }}
             >
               <Text style={styles.fabSubmenuIcon}>?</Text>

@@ -12,7 +12,7 @@ let captureRef: any = null;
 try { captureRef = require('react-native-view-shot').captureRef; } catch (_e) { captureRef = null; }
 import { ICONS } from '../../Images';
 import { styles } from './ColorDetector.styles';
-import { getFallbackColor, getJpegUtils, getJpegOrientation, decodeJpegAndSampleCenter as _decodeCenter, decodeJpegAndSampleAt as _decodeAt, hexToRgb, processWithIndicator, mapPressToPreviewCoords, mapLocalPressToPreviewCoords } from './ColorDetectorLogic';
+import { getFallbackColor, getJpegUtils, getJpegOrientation, decodeJpegAndSampleCenter as _decodeCenter, decodeJpegAndSampleAt as _decodeAt, hexToRgb, processWithIndicator, mapPressToPreviewCoords, mapLocalPressToPreviewCoords, normalizeBrightnessICtCp } from './ColorDetectorLogic';
 import { findClosestColor } from '../../services/ColorMatcher';
 import { findClosestColorAsync } from '../../services/ColorMatcherWorker';
 import { inferColorFromRGB } from '../../services/ColorDetectorInference';
@@ -42,11 +42,21 @@ interface ColorDetectorProps {
   showRealName?: boolean;
 }
 
+type DetectedColor = { family: string; hex: string; realName: string; confidence?: number };
+const SAMPLE_RADIUS_RATIO = 0.08;
+const MIN_SAMPLE_RADIUS = 4;
+const computeSampleHalf = (w: number, h: number): number => {
+  if (!w || !h) return MIN_SAMPLE_RADIUS;
+  const minDim = Math.min(w, h);
+  if (!isFinite(minDim) || minDim <= 0) return MIN_SAMPLE_RADIUS;
+  return Math.max(MIN_SAMPLE_RADIUS, Math.round(minDim * SAMPLE_RADIUS_RATIO));
+};
+
 const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voiceEnabled=true, colorCodesVisible=true, voiceMode='family', showFamily=true, showRealName=true }) => {
   const insets = useSafeAreaInsets();
-  const [detected, setDetected] = useState<{family:string,hex:string,realName:string,confidence?:number} | null>(null);
-  const [liveDetected, setLiveDetected] = useState<{family:string,hex:string,realName:string,confidence?:number} | null>(null);
-  const [frozenSnapshot, setFrozenSnapshot] = useState<{family:string,hex:string,realName:string,confidence?:number} | null>(null);
+  const [detected, setDetected] = useState<DetectedColor | null>(null);
+  const [liveDetected, setLiveDetected] = useState<DetectedColor | null>(null);
+  const [frozenSnapshot, setFrozenSnapshot] = useState<DetectedColor | null>(null);
   const [freeze, setFreeze] = useState(false);
   const freezeRef = useRef<boolean>(false);
   const [crosshairPos, setCrosshairPos] = useState<{x:number,y:number}|null>(null);
@@ -76,6 +86,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
   const availableDevice = availableDevices ? availableDevices.find((d:any) => d.position === 'back') ?? availableDevices[0] : null;
   const permissionInitializedRef = useRef(false);
   const exitAppPendingRef = useRef(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   const processingFrameRef = useRef(false);
 
@@ -95,6 +106,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
   const processSnapshotAndSample = async (): Promise<boolean> => {
     try {
       if (cameraPermission !== 'authorized') return false;
+      if (cameraError) return false; // Don't process if camera has an error
       if (processingFrameRef.current) return false;
       if (freeze) return false;
       processingFrameRef.current = true;
@@ -126,9 +138,10 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
               const cy = ph ? Math.round(ph / 2) : 0;
               const nativeSample = await decodeScaledRegion(normalizedUri, cx, cy, pw, ph);
               if (nativeSample && typeof nativeSample.r === 'number') {
-                const inferred = await inferColorFromRGB({ r: nativeSample.r, g: nativeSample.g, b: nativeSample.b }).catch(() => null);
+                const adj = normalizeBrightnessICtCp({ r: nativeSample.r, g: nativeSample.g, b: nativeSample.b });
+                const inferred = await inferColorFromRGB({ r: adj.r, g: adj.g, b: adj.b }).catch(() => null);
                 if (inferred) {
-                  const live = { family: inferred.family, hex: inferred.hex, realName: inferred.realName, confidence: inferred.confidence };
+                  const live: DetectedColor = { family: inferred.family, hex: inferred.hex, realName: inferred.realName, confidence: inferred.confidence };
                   if (!freeze) setLiveDetected(live);
                   processingFrameRef.current = false;
                   return true;
@@ -161,10 +174,11 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
         }
         if (count === 0) { processingFrameRef.current = false; return false; }
         const sampled = { r: Math.round(rSum/count), g: Math.round(gSum/count), b: Math.round(bSum/count) };
+        const adj = normalizeBrightnessICtCp(sampled);
         try {
-          const inferred = await inferColorFromRGB({ r: sampled.r, g: sampled.g, b: sampled.b }).catch(() => null);
+          const inferred = await inferColorFromRGB({ r: adj.r, g: adj.g, b: adj.b }).catch(() => null);
           if (inferred) {
-            const live = { family: inferred.family, hex: inferred.hex, realName: inferred.realName, confidence: inferred.confidence };
+            const live: DetectedColor = { family: inferred.family, hex: inferred.hex, realName: inferred.realName, confidence: inferred.confidence };
             if (!freeze) setLiveDetected(live);
             processingFrameRef.current = false;
             return true;
@@ -241,26 +255,41 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
       try {
         const ref = cameraRef.current as any;
         if (ref) {
+          // Stop any active camera preview
           if (typeof ref.stopPreview === 'function') try { ref.stopPreview(); } catch (_e) {}
           if (typeof ref.pausePreview === 'function') try { ref.pausePreview(); } catch (_e) {}
+          // Release camera device for VisionCamera
+          if (VisionCamera && typeof ref.destroy === 'function') {
+            try { ref.destroy(); } catch (_e) {}
+          }
           try { cameraRef.current = null; } catch (_e) {}
         }
       } catch (_e) {}
+      // Clear camera error state on cleanup
+      setCameraError(null);
     };
   }, []);
 
   useEffect(() => {
     const discover = async () => {
       if (!VisionCamera) return;
-      if (cameraPermission !== 'authorized') return;
+      if (cameraPermission !== 'authorized') {
+        // Clear camera error when permission is not authorized
+        setCameraError(null);
+        return;
+      }
       try {
+        // Clear previous error before discovering devices
+        setCameraError(null);
         if (VisionCamera.getAvailableCameraDevices) {
           const list = await VisionCamera.getAvailableCameraDevices(); setAvailableDevices(list ?? null); return;
         }
         if (VisionCamera.Camera && VisionCamera.Camera.getAvailableCameraDevices) {
           const list = await VisionCamera.Camera.getAvailableCameraDevices(); setAvailableDevices(list ?? null); return;
         }
-      } catch (err) {}
+      } catch (err) {
+        console.warn('Failed to discover camera devices:', err);
+      }
     };
     discover();
     if (cameraPermission === 'authorized') startDetection();
@@ -286,9 +315,9 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
         processSnapshotAndSample().then((ok) => {
           if (!ok) {
             const c = getFallbackColor();
-            try { const rgb = hexToRgb(c.hex); const match = findClosestColor(rgb, 3); const live = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setLiveDetected(live); } catch (err) { setLiveDetected(c); }
+            try { const rgb = hexToRgb(c.hex); const match = findClosestColor(rgb, 3); const live: DetectedColor = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setLiveDetected(live); } catch (err) { setLiveDetected(c); }
           }
-        }).catch(() => { const c = getFallbackColor(); try { const rgb = hexToRgb(c.hex); const match = findClosestColor(rgb, 3); const live = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setLiveDetected(live); } catch (err) { setLiveDetected(c); } });
+        }).catch(() => { const c = getFallbackColor(); try { const rgb = hexToRgb(c.hex); const match = findClosestColor(rgb, 3); const live: DetectedColor = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setLiveDetected(live); } catch (err) { setLiveDetected(c); } });
       }
     }, 800);
   };
@@ -306,7 +335,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
               previewLayout.current = { x: px, y: py, width: pw, height: ph };
               const center = { x: pw / 2, y: ph / 2 };
               setCrosshairPos(center);
-              setFrozenSnapshot(liveDetected);
+              setFrozenSnapshot(liveDetected as DetectedColor | null);
               (async () => {
                 try {
                   const ref: any = cameraRef.current;
@@ -377,14 +406,14 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
               try {
                 const { decodeScaledRegion } = require('../../services/ImageDecoder');
                 const nativeSample = await decodeScaledRegion(uri, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0);
-                if (nativeSample) { const match = await findClosestColorAsync([nativeSample.r, nativeSample.g, nativeSample.b], 3).catch(() => null); if (match) { selectedSample = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setDetected(selectedSample); setFrozenSnapshot(selectedSample); } }
+                if (nativeSample) { const adj = normalizeBrightnessICtCp({ r: nativeSample.r, g: nativeSample.g, b: nativeSample.b }); const match = await findClosestColorAsync([adj.r, adj.g, adj.b], 3).catch(() => null); if (match) { selectedSample = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setDetected(selectedSample); setFrozenSnapshot(selectedSample); } }
               } catch (_e) {
-                try { const RNFS = require('react-native-fs'); const base64 = await RNFS.readFile(uri.replace('file://',''), 'base64'); const sample = _decodeAt(base64, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0); if (sample) { const match = await findClosestColorAsync([sample.r, sample.g, sample.b], 3).catch(() => null); if (match) { selectedSample = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setDetected(selectedSample); setFrozenSnapshot(selectedSample); } } } catch (_e2) {}
+                try { const RNFS = require('react-native-fs'); const base64 = await RNFS.readFile(uri.replace('file://',''), 'base64'); const sample = _decodeAt(base64, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0); if (sample) { const adj = normalizeBrightnessICtCp(sample); const match = await findClosestColorAsync([adj.r, adj.g, adj.b], 3).catch(() => null); if (match) { selectedSample = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setDetected(selectedSample); setFrozenSnapshot(selectedSample); } } } catch (_e2) {}
               }
             } catch (_e) {}
           }
           if (!selectedSample) {
-            try { const res:any = await captureAndSampleAt(relX, relY); if (res) { selectedSample = res; setDetected(res); setFrozenSnapshot(res); } else { try { const sampled = getFallbackColor(); const rgb = hexToRgb(sampled.hex); const match = findClosestColor(rgb, 3); const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setDetected(c); setFrozenSnapshot(c); selectedSample = c; } catch (err) { const c = getFallbackColor(); setDetected(c); setFrozenSnapshot(c); selectedSample = c; } } } catch (_err) { try { const sampled = getFallbackColor(); const rgb = hexToRgb(sampled.hex); const match = findClosestColor(rgb, 3); const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setDetected(c); setFrozenSnapshot(c); selectedSample = c; } catch (err) { const c = getFallbackColor(); setDetected(c); setFrozenSnapshot(c); selectedSample = c; } }
+            try { const res:any = await captureAndSampleAt(relX, relY); if (res) { selectedSample = res; setDetected(res); setFrozenSnapshot(res); } else { try { const sampled = getFallbackColor(); const rgb = hexToRgb(sampled.hex); const match = findClosestColor(rgb, 3); const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setDetected(c); setFrozenSnapshot(c); selectedSample = c; } catch (err) { const c = getFallbackColor(); setDetected(c); setFrozenSnapshot(c); selectedSample = c; } } } catch (_err) { try { const sampled = getFallbackColor(); const rgb = hexToRgb(sampled.hex); const match = findClosestColor(rgb, 3); const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setDetected(c); setFrozenSnapshot(c); selectedSample = c; } catch (err) { const c = getFallbackColor(); setDetected(c); setFrozenSnapshot(c); selectedSample = c; } }
           }
         }
         if (selectedSample) try { setCrosshairPos({ x: relX, y: relY }); } catch (_e) {}
@@ -421,14 +450,14 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
               try {
                 const { decodeScaledRegion } = require('../../services/ImageDecoder');
                 const nativeSample = await decodeScaledRegion(uri, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0);
-                if (nativeSample) { const match = await findClosestColorAsync([nativeSample.r, nativeSample.g, nativeSample.b], 3).catch(() => null); if (match) { selectedSample = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setDetected(selectedSample); setFrozenSnapshot(selectedSample); } }
+                if (nativeSample) { const match = await findClosestColorAsync([nativeSample.r, nativeSample.g, nativeSample.b], 3).catch(() => null); if (match) { selectedSample = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setDetected(selectedSample); setFrozenSnapshot(selectedSample); } }
               } catch (_e) {
-                try { const RNFS = require('react-native-fs'); const base64 = await RNFS.readFile(uri.replace('file://',''), 'base64'); const sample = _decodeAt(base64, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0); if (sample) { const match = await findClosestColorAsync([sample.r, sample.g, sample.b], 3).catch(() => null); if (match) { selectedSample = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setDetected(selectedSample); setFrozenSnapshot(selectedSample); } } } catch (_e2) {}
+                try { const RNFS = require('react-native-fs'); const base64 = await RNFS.readFile(uri.replace('file://',''), 'base64'); const sample = _decodeAt(base64, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0); if (sample) { const match = await findClosestColorAsync([sample.r, sample.g, sample.b], 3).catch(() => null); if (match) { selectedSample = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setDetected(selectedSample); setFrozenSnapshot(selectedSample); } } } catch (_e2) {}
               }
             } catch (_e) {}
           }
           if (!selectedSample) {
-            try { const res:any = await captureAndSampleAt(relX, relY); if (res) { selectedSample = res; setDetected(res); setFrozenSnapshot(res); } else { try { const sampled = getFallbackColor(); const rgb = hexToRgb(sampled.hex); const match = findClosestColor(rgb, 3); const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setDetected(c); setFrozenSnapshot(c); selectedSample = c; } catch (err) { const c = getFallbackColor(); setDetected(c); setFrozenSnapshot(c); selectedSample = c; } } } catch (_err) { try { const sampled = getFallbackColor(); const rgb = hexToRgb(sampled.hex); const match = findClosestColor(rgb, 3); const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence }; setDetected(c); setFrozenSnapshot(c); selectedSample = c; } catch (err) { const c = getFallbackColor(); setDetected(c); setFrozenSnapshot(c); selectedSample = c; } }
+            try { const res:any = await captureAndSampleAt(relX, relY); if (res) { selectedSample = res; setDetected(res); setFrozenSnapshot(res); } else { try { const sampled = getFallbackColor(); const rgb = hexToRgb(sampled.hex); const match = findClosestColor(rgb, 3); const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setDetected(c); setFrozenSnapshot(c); selectedSample = c; } catch (err) { const c = getFallbackColor(); setDetected(c); setFrozenSnapshot(c); selectedSample = c; } } } catch (_err) { try { const sampled = getFallbackColor(); const rgb = hexToRgb(sampled.hex); const match = findClosestColor(rgb, 3); const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name }; setDetected(c); setFrozenSnapshot(c); selectedSample = c; } catch (err) { const c = getFallbackColor(); setDetected(c); setFrozenSnapshot(c); selectedSample = c; } }
           }
         }
         if (selectedSample) try { setCrosshairPos({ x: relX, y: relY }); } catch (_e) {}
@@ -573,7 +602,8 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
                     if (base64) {
                       const centerSample = _decodeCenter(base64);
                       if (centerSample) {
-                        const match = await findClosestColorAsync([centerSample.r, centerSample.g, centerSample.b], 3).catch(() => null);
+                        const adj = normalizeBrightnessICtCp(centerSample);
+                        const match = await findClosestColorAsync([adj.r, adj.g, adj.b], 3).catch(() => null);
                         if (match) {
                           const c = { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
                           selectedSample = c;
@@ -637,9 +667,9 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
             try {
               const { decodeScaledRegion } = require('../../services/ImageDecoder');
               const nativeSample = await decodeScaledRegion(normalizedUri, (previewLayout.current.width || 0) / 2, (previewLayout.current.height || 0) / 2, previewLayout.current.width || 0, previewLayout.current.height || 0);
-                if (nativeSample) {
+              if (nativeSample) {
                 const match = await findClosestColorAsync([nativeSample.r, nativeSample.g, nativeSample.b], 3).catch(() => null);
-                if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+                if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
               }
             } catch (_e) {
               try {
@@ -648,7 +678,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
                     const sample = _decodeCenter(base64);
                 if (sample) {
                   const match = await findClosestColorAsync([sample.r, sample.g, sample.b], 3).catch(() => null);
-                  if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+                  if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
                 }
               } catch (_e2) {
               }
@@ -658,7 +688,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
             const sample = _decodeCenter((photo as any).base64);
             if (sample) {
               const inferred = await inferColorFromRGB({ r: sample.r, g: sample.g, b: sample.b }).catch(() => null);
-              if (inferred) return { family: inferred.family, hex: inferred.hex, realName: inferred.realName, confidence: inferred.confidence };
+              if (inferred) return { family: inferred.family, hex: inferred.hex, realName: inferred.realName };
             }
           }
         } catch (err) {
@@ -669,11 +699,11 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
   const takePicMethod = ref.takePictureAsync ? 'takePictureAsync' : 'capture';
         try {
           const pic = await ref[takePicMethod]({ quality: 0.5, base64: true, width: 640, doNotSave: true });
-            if (pic && pic.base64) {
+          if (pic && pic.base64) {
             const sample = _decodeCenter(pic.base64);
             if (sample) {
               const match = await findClosestColorAsync([sample.r, sample.g, sample.b], 3).catch(() => null);
-              if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+              if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
             }
           }
         } catch (err) {
@@ -756,9 +786,9 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
             try {
               const { decodeScaledRegion } = require('../../services/ImageDecoder');
               const nativeSample = await decodeScaledRegion(normalizedUri, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0);
-                if (nativeSample) {
+              if (nativeSample) {
                 const match = await findClosestColorAsync([nativeSample.r, nativeSample.g, nativeSample.b], 3).catch(() => null);
-                if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+                if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
               }
             } catch (_e) {
               try {
@@ -767,7 +797,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
                 const sample = _decodeAt(base64, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0);
                 if (sample) {
                   const inferred = await inferColorFromRGB({ r: sample.r, g: sample.g, b: sample.b }).catch(() => null);
-                  if (inferred) return { family: inferred.family, hex: inferred.hex, realName: inferred.realName, confidence: inferred.confidence };
+                  if (inferred) return { family: inferred.family, hex: inferred.hex, realName: inferred.realName };
                 }
               } catch (_e2) {
               }
@@ -778,7 +808,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
             const sample = _decodeAt((photo as any).base64, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0);
             if (sample) {
               const match = await findClosestColorAsync([sample.r, sample.g, sample.b], 3).catch(() => null);
-              if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+              if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
             }
           }
         } catch (_err) {
@@ -793,7 +823,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
             const sample = _decodeAt(pic.base64, relX, relY, previewLayout.current.width || 0, previewLayout.current.height || 0);
             if (sample) {
               const match = await findClosestColorAsync([sample.r, sample.g, sample.b], 3).catch(() => null);
-              if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+              if (match) return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
             }
           }
         } catch (_err) {
@@ -862,7 +892,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
               const mappedPreviewY = relY;
             
             } catch (_e) { }
-            return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+            return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
           }
         }
       } catch (_e) {
@@ -900,13 +930,13 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
         if (!centerSample) return null;
         const match = await findClosestColorAsync([centerSample.r, centerSample.g, centerSample.b], 3).catch(() => null);
         if (!match) return null;
-        return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+        return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
       }
       const scaled = imageScaledSize;
   if (!scaled) {
         const ix = Math.max(0, Math.min(w - 1, Math.round((relX / pw) * w)));
         const iy = Math.max(0, Math.min(h - 1, Math.round((relY / ph) * h)));
-        const half = 4;
+        const half = computeSampleHalf(w, h);
         let rSum = 0, gSum = 0, bSum = 0, count = 0;
         for (let yy = Math.max(0, iy - half); yy <= Math.min(h - 1, iy + half); yy++) {
           for (let xx = Math.max(0, ix - half); xx <= Math.min(w - 1, ix + half); xx++) {
@@ -959,7 +989,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
         }
       } catch (_e) { }
 
-      const half = 4;
+      const half = computeSampleHalf(w, h);
       let rSum = 0, gSum = 0, bSum = 0, count = 0;
       for (let yy = Math.max(0, iy - half); yy <= Math.min(h - 1, iy + half); yy++) {
         for (let xx = Math.max(0, ix - half); xx <= Math.min(w - 1, ix + half); xx++) {
@@ -976,7 +1006,7 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
   } catch (_e) { }
   const match = await findClosestColorAsync([sampled.r, sampled.g, sampled.b], 3).catch(() => null);
   if (!match) return null;
-  return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name, confidence: match.closest_match.confidence };
+  return { family: match.closest_match.family || match.closest_match.name, hex: match.closest_match.hex, realName: match.closest_match.name };
     } catch (err) {
       return null;
     }
@@ -1093,7 +1123,41 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
                  if (finalDevice) {
                   try {
                     const CameraComp = VisionCamera.Camera;
-                      return (
+                    
+                    // Handle camera errors gracefully
+                    const handleCameraError = (error: any) => {
+                      try {
+                        const errorMessage = error?.message || error?.toString() || 'Unknown camera error';
+                        console.warn('Camera error:', errorMessage);
+                        setCameraError(errorMessage);
+                        
+                        // If camera is already in use, try to recover after a delay
+                        if (errorMessage.includes('already in use') || errorMessage.includes('camera-already-in-use')) {
+                          setTimeout(() => {
+                            try {
+                              const ref = cameraRef.current;
+                              if (ref && typeof ref.destroy === 'function') {
+                                ref.destroy();
+                              }
+                              cameraRef.current = null;
+                              setCameraError(null);
+                              // Re-discover devices after cleanup
+                              setTimeout(() => {
+                                if (VisionCamera && VisionCamera.getAvailableCameraDevices) {
+                                  VisionCamera.getAvailableCameraDevices().then((devices: any[]) => {
+                                    setAvailableDevices(devices ?? null);
+                                  }).catch(() => {});
+                                }
+                              }, 500);
+                            } catch (_e) {}
+                          }, 1000);
+                        }
+                      } catch (_e) {
+                        console.warn('Error handling camera error:', _e);
+                      }
+                    };
+                    
+                    return (
                       <View ref={(el)=>{ previewRef.current = el; }} style={styles.cameraPreviewContainer} onLayout={async (e)=>{
                          try {
                            if (previewRef.current && previewRef.current.measureInWindow) {
@@ -1112,14 +1176,34 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
                            }
                          } catch (innerErr) {  }
                        }}>
-                           <CameraComp
-                           ref={cameraRef}
-                           style={styles.cameraInner}
-                           device={finalDevice}
-                           isActive={!freeze || capturing}
-                           photo={true}
-                           {...(frameProcessor ? { frameProcessor, frameProcessorFps: 2 } : {})}
-                         />
+                          {cameraError ? (
+                            <View style={[styles.cameraPreview, styles.cameraFallback]}>
+                              <Text style={styles.cameraFallbackText}>Camera Error: {cameraError.includes('already in use') ? 'Camera is busy. Please wait...' : cameraError}</Text>
+                              <TouchableOpacity 
+                                style={styles.permissionButton} 
+                                onPress={() => {
+                                  setCameraError(null);
+                                  if (VisionCamera && VisionCamera.getAvailableCameraDevices) {
+                                    VisionCamera.getAvailableCameraDevices().then((devices: any[]) => {
+                                      setAvailableDevices(devices ?? null);
+                                    }).catch(() => {});
+                                  }
+                                }}
+                              >
+                                <Text style={styles.permissionButtonText}>Retry</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
+                            <CameraComp
+                              ref={cameraRef}
+                              style={styles.cameraInner}
+                              device={finalDevice}
+                              isActive={(!freeze || capturing) && !cameraError}
+                              photo={true}
+                              onError={handleCameraError}
+                              {...(frameProcessor ? { frameProcessor, frameProcessorFps: 2 } : {})}
+                            />
+                          )}
                        </View>
                      );
                    } catch (innerErr) {
@@ -1255,12 +1339,14 @@ const ColorDetector: React.FC<ColorDetectorProps> = ({ onBack, openSettings, voi
             <Text style={styles.infoValue}>{displayDetected?.realName ?? '—'}</Text>
           </View>
         )}
-        {typeof displayDetected?.confidence === 'number' && (
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Confidence:</Text>
-            <Text style={styles.infoValue}>{`${Math.round(displayDetected!.confidence)}% match`}</Text>
-          </View>
-        )}
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Confidence:</Text>
+          <Text style={styles.infoValue}>
+            {typeof displayDetected?.confidence === 'number'
+              ? `${displayDetected.confidence}% Match`
+              : '—'}
+          </Text>
+        </View>
         <View style={styles.uploadRow}>
           <TouchableOpacity style={styles.uploadButton} onPress={pickImage} activeOpacity={0.8}>
             <View style={styles.uploadButtonContent}>

@@ -1,0 +1,158 @@
+import { StyleSheet } from 'react-native';
+
+const DARK = '#070D0D';
+const LIGHT = '#FCF8F7';
+const ACCENT = '#007FFF';
+
+export const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: LIGHT,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    backgroundColor: ACCENT,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#005FCC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  backIconImage: {
+    width: 18,
+    height: 18,
+    tintColor: LIGHT,
+    resizeMode: 'contain',
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: LIGHT,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 140,
+  },
+  heroCard: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    paddingVertical: 28,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E1E6EA',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+  },
+  heroLogo: {
+    width: 72,
+    height: 72,
+    marginBottom: 12,
+  },
+  appName: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: DARK,
+  },
+  appSubtitle: {
+    fontSize: 15,
+    color: '#4A5556',
+    marginTop: 6,
+  },
+  sectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E6EAED',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  sectionTitle: {
+    color: DARK,
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  sectionIcon: {
+    fontSize: 18,
+    width: 28,
+    textAlign: 'center',
+    color: ACCENT,
+    marginTop: 2,
+  },
+  sectionText: {
+    flex: 1,
+    color: '#3B4445',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  footer: {
+    marginTop: 12,
+    alignItems: 'center',
+    paddingBottom: 40,
+  },
+  footerText: {
+    color: '#6A7374',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  ctaContainer: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 24,
+  },
+  ctaButton: {
+    backgroundColor: ACCENT,
+    borderRadius: 18,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  ctaText: {
+    color: LIGHT,
+    fontSize: 16,
+    fontWeight: '700',
+    marginRight: 10,
+  },
+  ctaCheck: {
+    color: LIGHT,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+});
+

@@ -11,6 +11,10 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 class ImageDecoderModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
+    companion object {
+        private const val SAMPLE_RADIUS_RATIO = 0.08
+        private const val MIN_SAMPLE_RADIUS = 4
+    }
     override fun getName(): String {
         return "ImageDecoderModule"
     }
@@ -89,7 +93,9 @@ class ImageDecoderModule(reactContext: ReactApplicationContext) : ReactContextBa
             val clampX = max(0, min(bmpW - 1, ix))
             val clampY = max(0, min(bmpH - 1, iy))
 
-            val half = 1 // 3x3 sample
+            val minDim = min(bmpW, bmpH)
+            val computedRadius = (minDim * SAMPLE_RADIUS_RATIO).roundToInt()
+            val half = max(MIN_SAMPLE_RADIUS, computedRadius)
             var rSum = 0
             var gSum = 0
             var bSum = 0

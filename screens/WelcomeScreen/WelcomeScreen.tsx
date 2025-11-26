@@ -1,120 +1,87 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StatusBar,
   ScrollView,
-  Dimensions,
-  PixelRatio,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { styles } from './WelcomeScreen.styles';
+import { IMAGES } from '../../Images';
 
 interface WelcomeScreenProps {
   onNext: () => void;
 }
+
 const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNext }) => {
-  const { width } = Dimensions.get('window');
-
-  const scale = useMemo(() => {
-    const s = width / 375;
-    return Math.max(0.85, Math.min(s, 1.25));
-  }, [width]);
-
-  const scaled = useMemo(() => {
-    const rf = (size: number) => Math.round(PixelRatio.roundToNearestPixel(size * scale));
-    return {
-      titleSize: rf(36),
-      titleMargin: rf(28),
-      descSize: rf(16),
-      descLineHeight: rf(24),
-      buttonPaddingVertical: rf(14),
-      buttonPaddingHorizontal: rf(28),
-    };
-  }, [scale]);
+  const FeatureRow = ({
+    title,
+    description,
+    icon,
+  }: {
+    title: string;
+    description: string;
+    icon: string;
+  }) => (
+    <View style={styles.featureRow}>
+      <View style={styles.featureIconWrap}>
+        <Text style={styles.featureIcon}>{icon}</Text>
+      </View>
+      <View style={styles.featureContent}>
+        <Text style={styles.featureTitle}>{title}</Text>
+        <Text style={styles.featureDesc}>{description}</Text>
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-
+      <StatusBar barStyle="light-content" backgroundColor="#070D0D" />
       <ScrollView
-        contentContainerStyle={{
-          flexGrow: 1,
-          justifyContent: 'center',
-          paddingHorizontal: Math.max(20, Math.min(40, Math.round(width * 0.08))),
-          paddingTop: 20,
-          paddingBottom: 12,
-        }}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.content}>
-          <Text
-            style={[
-              styles.title,
-              { fontSize: scaled.titleSize, marginBottom: scaled.titleMargin },
-            ]}
-          >
-            Welcome
+        <View style={styles.heroSection}>
+          <Image source={IMAGES.LOGO} style={styles.heroLogo} resizeMode="contain" />
+          <Text style={styles.heroTitle}>ColorLens</Text>
+          <Text style={styles.heroSubtitle}>
+            Welcome to ColorLens. Your AI assistant for instant color recognition and voice feedback.
           </Text>
-
-          <View style={styles.descriptionContainer}>
-            <Text
-              style={[
-                styles.description,
-                { fontSize: scaled.descSize, lineHeight: scaled.descLineHeight },
-              ]}
-            >
-              Welcome to ColorLens — your AI-based color recognition and voice feedback assistant.
-            </Text>
-
-            <Text
-              style={[
-                styles.description,
-                { marginTop: 10, fontSize: scaled.descSize, lineHeight: scaled.descLineHeight },
-              ]}
-            >
-              Use your camera in real time or upload an image. ColorLens helps you identify colors, hear their names spoken aloud, and see hex codes and color families.
-            </Text>
-
-            <Text
-              style={[
-                styles.description,
-                { marginTop: 10, fontSize: scaled.descSize, lineHeight: scaled.descLineHeight },
-              ]}
-            >
-              Perfect for people with color vision difficiency.
-            </Text>
-
-            <Text
-              style={[
-                styles.description,
-                { marginTop: 10, fontSize: scaled.descSize, lineHeight: scaled.descLineHeight, fontWeight: '600' },
-              ]}
-            >
-              Fast, intuitive, and inclusive.
-            </Text>
-
-            <Text style={[styles.connectedText, { marginTop: 12 }]}>— ColorLens makes color recognition easy for everyone.</Text>
-          </View>
         </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>What it Does</Text>
+          <FeatureRow
+            title="Real-Time Identification"
+            description="Use your camera or upload an image to detect colors on the spot."
+            icon="📷"
+          />
+          <FeatureRow
+            title="Speak and See"
+            description="Hear the color name aloud and view the HEX code instantly."
+            icon="🔊"
+          />
+          <FeatureRow
+            title="Color Families"
+            description="Discover related shades and curated palettes."
+            icon="🎨"
+          />
+        </View>
+
+
       </ScrollView>
 
-      <View style={[styles.buttonContainer, { paddingHorizontal: Math.max(20, Math.round(width * 0.06)), paddingBottom: 24 }]}> 
+      <View style={styles.buttonContainer}>
         <TouchableOpacity
-          style={[
-            styles.nextButton,
-            {
-              paddingVertical: scaled.buttonPaddingVertical,
-              paddingHorizontal: scaled.buttonPaddingHorizontal,
-              borderRadius: Math.max(20, Math.round(25 * scale)),
-            },
-          ]}
+          style={styles.startButton}
           onPress={onNext}
-          activeOpacity={0.8}
+          activeOpacity={0.85}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Text style={styles.nextButtonText}>Next</Text>
-          <Text style={styles.arrow}>→</Text>
+          <Text style={styles.startButtonText}>Start Exploring</Text>
+          <Text style={styles.startArrow}>→</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -122,5 +89,3 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNext }) => {
 };
 
 export default WelcomeScreen;
-
-

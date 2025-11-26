@@ -14,9 +14,9 @@ export default {
     })
   },
 
-  predictLab(l: number, a: number, b: number): Promise<PredictResult> {
+  predict(features: number[]): Promise<PredictResult> {
     return new Promise((resolve, reject) => {
-      ColorTFLite.predict(l, a, b, (err: any, res: any) => {
+      ColorTFLite.predict(features, (err: any, res: any) => {
         if (err) return reject(err)
         resolve({ index: res.index, score: res.score })
       })
