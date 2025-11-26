@@ -108,7 +108,7 @@ function findClosest(rgb, topN) {
     });
 
     results.sort((a, b) => a.deltaE - b.deltaE);
-    function classifyFamily(L, C, h, Ipt, P, T, I_ictcp, Ct, Cp) {
+    const getClassificationMeta = (L, C, h, I_ictcp, Ct) => {
       const ictcpBrightness = I_ictcp || L;
       const effectiveChroma = Math.max(C, Math.abs(Ct || 0) * 0.3);
       const normalizedHue = Number.isFinite(h) ? ((h % 360) + 360) % 360 : NaN;
@@ -116,7 +116,10 @@ function findClosest(rgb, topN) {
       const hueNearNeutral = !Number.isFinite(normalizedHue) || normalizedHue < 15 || normalizedHue > 345;
       const allowNeutralClassification = !hueStable || hueNearNeutral || effectiveChroma < 0.02;
       const lightColorGuard = L > 0.75 && effectiveChroma >= 0.02;
-
+      return { ictcpBrightness, effectiveChroma, normalizedHue, hueStable, hueNearNeutral, allowNeutralClassification, lightColorGuard };
+    };
+    function classifyFamily(meta, L, h, Ipt, P, T, Cp) {
+      const { ictcpBrightness, effectiveChroma, normalizedHue, allowNeutralClassification, lightColorGuard } = meta;
       if (ictcpBrightness <= 0.2 || L <= 0.2) return 'Black';
       if (L > 0.92 && effectiveChroma < 0.02 && allowNeutralClassification) return 'White';
 
@@ -161,7 +164,8 @@ function findClosest(rgb, topN) {
     const I_ictcp = Number(ictcpCoords[0] || 0);
     const Ct = Number(ictcpCoords[1] || 0);
     const Cp = Number(ictcpCoords[2] || 0);
-    const classifiedFamily = classifyFamily(L, C, h, Ipt, P, T, I_ictcp, Ct, Cp);
+    const classificationMeta = getClassificationMeta(L, C, h, I_ictcp, Ct);
+    const classifiedFamily = classifyFamily(classificationMeta, L, h, Ipt, P, T, Cp);
     const detectedHex = normalizeHex(rgb.map((v) => v.toString(16).padStart(2, '0')).join(''));
     const normalizeFamilyLabel = (value) => (value || '').trim().toLowerCase();
     const classifiedFamilyKey = normalizeFamilyLabel(classifiedFamily);
@@ -184,12 +188,28 @@ function findClosest(rgb, topN) {
         }
       }
     }
+    const displayFamilyKey = normalizeFamilyLabel(displayMatch && (displayMatch.family || displayMatch.name));
+    const baseConfidence = displayMatch?.confidence ?? topMatch?.confidence ?? 0;
+    const displayDelta = displayMatch?.deltaE ?? topMatch?.deltaE ?? 0;
+    const deltaConfidence = Math.max(0, Math.min(100, Math.round(100 - Math.min(displayDelta, 40) * 2.2)));
+    const classifierConfidence = Math.min(
+      95,
+      Math.max(
+        40,
+        (classificationMeta.hueStable ? 70 : 50) +
+          (classificationMeta.lightColorGuard ? 10 : 0) +
+          (displayFamilyKey === classifiedFamilyKey ? 5 : 0)
+      )
+    );
+    const blendedConfidence = Math.round((baseConfidence + deltaConfidence + classifierConfidence) / 3);
+    const finalConfidence = Math.max(baseConfidence, blendedConfidence, deltaConfidence, classifierConfidence);
+
     const out = {
       detected_color_rgb: rgb,
       detected_color_hex: detectedHex,
       closest_match: displayMatch
-        ? { ...displayMatch, hex: normalizeHex(displayMatch.hex), family: classifiedFamily }
-        : { name: classifiedFamily, hex: detectedHex, family: classifiedFamily, deltaE: 0, confidence: 100 },
+        ? { ...displayMatch, hex: normalizeHex(displayMatch.hex), family: classifiedFamily, confidence: finalConfidence }
+        : { name: classifiedFamily, hex: detectedHex, family: classifiedFamily, deltaE: 0, confidence: finalConfidence || 100 },
       alternatives: results.slice(1, topN),
     };
     return out;

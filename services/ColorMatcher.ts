@@ -144,11 +144,17 @@ export function findClosestColor(detectedRGB: number[], topN = 3): MatchResult {
 
   results.sort((a, b) => a.deltaE - b.deltaE);
 
-  // OKLCH + IPT + ICtCp based family classification rules
-  // ICtCp provides brightness-robust detection for White/Black/Brown/Gray
-  // IPT provides excellent skin-tone classification (light pink, peach, beige, pale violet)
-  // OKLCH.h provides precise hue-based classification (red vs orange, pink vs red, blue vs violet, green vs yellow)
-  function classifyFamily(L: number, C: number, h: number, Ipt: number, P: number, T: number, I_ictcp: number, Ct: number, Cp: number): string {
+  type ClassificationMeta = {
+    ictcpBrightness: number;
+    effectiveChroma: number;
+    normalizedHue: number;
+    hueStable: boolean;
+    hueNearNeutral: boolean;
+    allowNeutralClassification: boolean;
+    lightColorGuard: boolean;
+  };
+
+  function getClassificationMeta(L: number, C: number, h: number, I_ictcp: number, Ct: number): ClassificationMeta {
     const ictcpBrightness = I_ictcp || L;
     const effectiveChroma = Math.max(C, Math.abs(Ct || 0) * 0.3);
     const normalizedHue = Number.isFinite(h) ? ((h % 360) + 360) % 360 : NaN;
@@ -156,6 +162,15 @@ export function findClosestColor(detectedRGB: number[], topN = 3): MatchResult {
     const hueNearNeutral = !Number.isFinite(normalizedHue) || normalizedHue < 15 || normalizedHue > 345;
     const allowNeutralClassification = !hueStable || hueNearNeutral || effectiveChroma < 0.02;
     const lightColorGuard = L > 0.75 && effectiveChroma >= 0.02;
+    return { ictcpBrightness, effectiveChroma, normalizedHue, hueStable, hueNearNeutral, allowNeutralClassification, lightColorGuard };
+  }
+
+  // OKLCH + IPT + ICtCp based family classification rules
+  // ICtCp provides brightness-robust detection for White/Black/Brown/Gray
+  // IPT provides excellent skin-tone classification (light pink, peach, beige, pale violet)
+  // OKLCH.h provides precise hue-based classification (red vs orange, pink vs red, blue vs violet, green vs yellow)
+  function classifyFamily(meta: ClassificationMeta, L: number, h: number, Ipt: number, P: number, T: number, Cp: number): string {
+    const { ictcpBrightness, effectiveChroma, normalizedHue, allowNeutralClassification, lightColorGuard } = meta;
 
     if (ictcpBrightness <= 0.2 || L <= 0.2) return 'Black';
 
@@ -183,7 +198,7 @@ export function findClosestColor(detectedRGB: number[], topN = 3): MatchResult {
     if (normalizedHue >= 70 && normalizedHue < 100) return 'Yellow';
     if (normalizedHue >= 100 && normalizedHue < 180) return 'Green';
     if (normalizedHue >= 180 && normalizedHue < 250) return 'Blue';
-    if (normalizedHue >= 250 && normalizedHue < 260) return Math.abs(Ct || 0) > 0.08 ? 'Blue' : 'Violet';
+    if (normalizedHue >= 250 && normalizedHue < 260) return Math.abs(Cp || 0) > 0.08 ? 'Blue' : 'Violet';
     if (normalizedHue >= 260 && normalizedHue < 320) return 'Violet';
     if (normalizedHue >= 320 && normalizedHue < 345) {
       if ((L > 0.65 && effectiveChroma < 0.12) || (ptMag < 0.04 && Ipt > 0.65)) return 'Pink';
@@ -203,7 +218,8 @@ export function findClosestColor(detectedRGB: number[], topN = 3): MatchResult {
   const I_ictcp = Number(ictcpCoords[0] || 0);
   const Ct = Number(ictcpCoords[1] || 0);
   const Cp = Number(ictcpCoords[2] || 0);
-  const classifiedFamily = classifyFamily(L, C, h, Ipt, P, T, I_ictcp, Ct, Cp);
+  const classificationMeta = getClassificationMeta(L, C, h, I_ictcp, Ct);
+  const classifiedFamily = classifyFamily(classificationMeta, L, h, Ipt, P, T, Cp);
 
   const detectedHex = normalizeHex(
     detectedRGB.map((v) => v.toString(16).padStart(2, '0')).join('')
@@ -231,6 +247,22 @@ export function findClosestColor(detectedRGB: number[], topN = 3): MatchResult {
     }
   }
 
+  const displayFamilyKey = normalizeFamilyLabel(displayMatch?.family || displayMatch?.name);
+  const baseConfidence = displayMatch?.confidence ?? topMatch?.confidence ?? 0;
+  const displayDelta = displayMatch?.deltaE ?? topMatch?.deltaE ?? 0;
+  const deltaConfidence = Math.max(0, Math.min(100, Math.round(100 - Math.min(displayDelta, 40) * 2.2)));
+  const classifierConfidence = Math.min(
+    95,
+    Math.max(
+      40,
+      (classificationMeta.hueStable ? 70 : 50) +
+        (classificationMeta.lightColorGuard ? 10 : 0) +
+        (displayFamilyKey === classifiedFamilyKey ? 5 : 0)
+    )
+  );
+  const blendedConfidence = Math.round((baseConfidence + deltaConfidence + classifierConfidence) / 3);
+  const finalConfidence = Math.max(baseConfidence, blendedConfidence, deltaConfidence, classifierConfidence);
+
   const output: MatchResult = {
     detected_color_rgb: detectedRGB,
     detected_color_hex: detectedHex,
@@ -239,13 +271,14 @@ export function findClosestColor(detectedRGB: number[], topN = 3): MatchResult {
           ...displayMatch,
           hex: normalizeHex(displayMatch.hex),
           family: classifiedFamily,
+          confidence: finalConfidence,
         }
       : {
           name: classifiedFamily,
           hex: detectedHex,
           family: classifiedFamily,
           deltaE: 0,
-          confidence: 100,
+          confidence: finalConfidence || 100,
         },
     alternatives: results.slice(1, topN),
   };
