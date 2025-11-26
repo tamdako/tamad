@@ -110,33 +110,46 @@ function findClosest(rgb, topN) {
     results.sort((a, b) => a.deltaE - b.deltaE);
     function classifyFamily(L, C, h, Ipt, P, T, I_ictcp, Ct, Cp) {
       const ictcpBrightness = I_ictcp || L;
-      if (ictcpBrightness >= 0.92 || L >= 0.92) return 'White';
-      if (ictcpBrightness <= 0.18 || L <= 0.18) return 'Black';
       const effectiveChroma = Math.max(C, Math.abs(Ct || 0) * 0.3);
-      if (effectiveChroma <= 0.02 && Math.abs(Cp || 0) < 0.01) return 'Gray';
-      const chromaLow = effectiveChroma < 0.08;
-      const warmHue = h >= 20 && h <= 100;
+      const normalizedHue = Number.isFinite(h) ? ((h % 360) + 360) % 360 : NaN;
+      const hueStable = effectiveChroma >= 0.02 && Number.isFinite(normalizedHue);
+      const hueNearNeutral = !Number.isFinite(normalizedHue) || normalizedHue < 15 || normalizedHue > 345;
+      const allowNeutralClassification = !hueStable || hueNearNeutral || effectiveChroma < 0.02;
+      const lightColorGuard = L > 0.75 && effectiveChroma >= 0.02;
+
+      if (ictcpBrightness <= 0.2 || L <= 0.2) return 'Black';
+      if (L > 0.92 && effectiveChroma < 0.02 && allowNeutralClassification) return 'White';
+
+      if (!lightColorGuard) {
+        const grayChromaLimit = L > 0.75 ? 0.015 : 0.03;
+        const withinGrayLightness = L >= 0.2 && L <= 0.9;
+        if (allowNeutralClassification && effectiveChroma < grayChromaLimit && withinGrayLightness && Math.abs(Cp || 0) < 0.015) {
+          return 'Gray';
+        }
+      }
+
       const ptMag = Math.hypot(P || 0, T || 0);
-      if (chromaLow && warmHue) {
-        if ((ictcpBrightness >= 0.55 || L >= 0.55) && (ictcpBrightness <= 0.9 || L <= 0.9) && ptMag < 0.06) return 'Brown';
-        if (ictcpBrightness < 0.55 || L < 0.55) return 'Brown';
+      const isWarmHue = Number.isFinite(normalizedHue) && normalizedHue >= 20 && normalizedHue <= 80;
+      if (isWarmHue && L >= 0.25 && L <= 0.55 && effectiveChroma < 0.14) return 'Brown';
+
+      if ((normalizedHue >= 345 || normalizedHue < 20) && L >= 0.65 && L <= 0.95 && effectiveChroma < 0.2) {
+        if (ptMag < 0.05 || Ipt > 0.6) return 'Pink';
       }
-      if ((h >= 345 || h < 20)) {
-        if ((L > 0.65 && effectiveChroma < 0.15) || (ptMag < 0.05 && Ipt > 0.6)) return 'Pink';
-        return 'Red';
-      }
-      if (h >= 20 && h < 50) return 'Orange';
-      if (h >= 50 && h < 70) return effectiveChroma > 0.12 ? 'Orange' : 'Yellow';
-      if (h >= 70 && h < 100) return 'Yellow';
-      if (h >= 100 && h < 180) return 'Green';
-      if (h >= 180 && h < 250) return 'Blue';
-      if (h >= 250 && h < 260) return Math.abs(Ct || 0) > 0.08 ? 'Blue' : 'Violet';
-      if (h >= 260 && h < 320) return 'Violet';
-      if (h >= 320 && h < 345) {
+
+      if (normalizedHue >= 345 || normalizedHue < 20) return 'Red';
+      if (normalizedHue >= 20 && normalizedHue < 50) return 'Orange';
+      if (normalizedHue >= 50 && normalizedHue < 70) return effectiveChroma > 0.12 ? 'Orange' : 'Yellow';
+      if (normalizedHue >= 70 && normalizedHue < 100) return 'Yellow';
+      if (normalizedHue >= 100 && normalizedHue < 180) return 'Green';
+      if (normalizedHue >= 180 && normalizedHue < 250) return 'Blue';
+      if (normalizedHue >= 250 && normalizedHue < 260) return Math.abs(Ct || 0) > 0.08 ? 'Blue' : 'Violet';
+      if (normalizedHue >= 260 && normalizedHue < 320) return 'Violet';
+      if (normalizedHue >= 320 && normalizedHue < 345) {
         if ((L > 0.65 && effectiveChroma < 0.12) || (ptMag < 0.04 && Ipt > 0.65)) return 'Pink';
         return 'Violet';
       }
-      if (effectiveChroma <= 0.05 && Math.abs(Cp || 0) < 0.02) return 'Gray';
+
+      if (allowNeutralClassification && effectiveChroma < 0.05) return 'Gray';
       return 'Gray';
     }
     const L = Number(oklchCoords[0] || 0);
@@ -149,10 +162,34 @@ function findClosest(rgb, topN) {
     const Ct = Number(ictcpCoords[1] || 0);
     const Cp = Number(ictcpCoords[2] || 0);
     const classifiedFamily = classifyFamily(L, C, h, Ipt, P, T, I_ictcp, Ct, Cp);
+    const detectedHex = normalizeHex(rgb.map((v) => v.toString(16).padStart(2, '0')).join(''));
+    const normalizeFamilyLabel = (value) => (value || '').trim().toLowerCase();
+    const classifiedFamilyKey = normalizeFamilyLabel(classifiedFamily);
+    const topMatch = results[0];
+    let displayMatch = topMatch;
+    if (classifiedFamilyKey && topMatch) {
+      const topFamilyKey = normalizeFamilyLabel(topMatch.family || topMatch.name);
+      if (topFamilyKey !== classifiedFamilyKey) {
+        const aligned = results.find(
+          (row) => normalizeFamilyLabel(row.family || row.name) === classifiedFamilyKey
+        );
+        if (aligned) {
+          displayMatch = aligned;
+        } else {
+          displayMatch = {
+            ...topMatch,
+            name: classifiedFamily,
+            hex: detectedHex,
+          };
+        }
+      }
+    }
     const out = {
       detected_color_rgb: rgb,
-      detected_color_hex: normalizeHex(rgb.map((v) => v.toString(16).padStart(2, '0')).join('')),
-      closest_match: { ...results[0], family: classifiedFamily },
+      detected_color_hex: detectedHex,
+      closest_match: displayMatch
+        ? { ...displayMatch, hex: normalizeHex(displayMatch.hex), family: classifiedFamily }
+        : { name: classifiedFamily, hex: detectedHex, family: classifiedFamily, deltaE: 0, confidence: 100 },
       alternatives: results.slice(1, topN),
     };
     return out;

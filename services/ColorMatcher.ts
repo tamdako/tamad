@@ -149,72 +149,48 @@ export function findClosestColor(detectedRGB: number[], topN = 3): MatchResult {
   // IPT provides excellent skin-tone classification (light pink, peach, beige, pale violet)
   // OKLCH.h provides precise hue-based classification (red vs orange, pink vs red, blue vs violet, green vs yellow)
   function classifyFamily(L: number, C: number, h: number, Ipt: number, P: number, T: number, I_ictcp: number, Ct: number, Cp: number): string {
-    // Use ICtCp I (brightness) for robust White/Black detection (immune to shadows/overexposure)
-    const ictcpBrightness = I_ictcp || L; // Fallback to OKLCH L if ICtCp unavailable
-    
-    // Extremes - ICtCp I is more stable under varying lighting
-    if (ictcpBrightness >= 0.92 || L >= 0.92) return 'White';
-    if (ictcpBrightness <= 0.18 || L <= 0.18) return 'Black';
+    const ictcpBrightness = I_ictcp || L;
+    const effectiveChroma = Math.max(C, Math.abs(Ct || 0) * 0.3);
+    const normalizedHue = Number.isFinite(h) ? ((h % 360) + 360) % 360 : NaN;
+    const hueStable = effectiveChroma >= 0.02 && Number.isFinite(normalizedHue);
+    const hueNearNeutral = !Number.isFinite(normalizedHue) || normalizedHue < 15 || normalizedHue > 345;
+    const allowNeutralClassification = !hueStable || hueNearNeutral || effectiveChroma < 0.02;
+    const lightColorGuard = L > 0.75 && effectiveChroma >= 0.02;
 
-    // Use ICtCp Ct for chroma to better handle brightness variations (shadows, dim lighting, blue-tinted LEDs)
-    const effectiveChroma = Math.max(C, Math.abs(Ct || 0) * 0.3); // Combine OKLCH C with ICtCp Ct
-    
-    // Desaturated gray - ICtCp helps identify grays under varied lighting
-    if (effectiveChroma <= 0.02 && Math.abs(Cp || 0) < 0.01) return 'Gray';
+    if (ictcpBrightness <= 0.2 || L <= 0.2) return 'Black';
 
-    // Brown (dark/desaturated warm) and Beige/Peach (skin-like) using IPT + ICtCp
-    const chromaLow = effectiveChroma < 0.08;
-    const warmHue = h >= 20 && h <= 100;
+    if (L > 0.92 && effectiveChroma < 0.02 && allowNeutralClassification) return 'White';
+
+    if (!lightColorGuard) {
+      const grayChromaLimit = L > 0.75 ? 0.015 : 0.03;
+      const withinGrayLightness = L >= 0.2 && L <= 0.9;
+      if (allowNeutralClassification && effectiveChroma < grayChromaLimit && withinGrayLightness && Math.abs(Cp || 0) < 0.015) {
+        return 'Gray';
+      }
+    }
+
     const ptMag = Math.hypot(P || 0, T || 0);
-    
-    // IPT excels at detecting skin-like colors: light pink, peach, beige, pale violet
-    // Low P/T magnitude indicates muted, skin-like tones
-    if (chromaLow && warmHue) {
-      // Beige/Peach: medium-high lightness, low chroma, low PT -> Brown family (skin-like beige)
-      // ICtCp helps maintain accuracy under shadows/dim lighting
-      if ((ictcpBrightness >= 0.55 || L >= 0.55) && (ictcpBrightness <= 0.9 || L <= 0.9) && ptMag < 0.06) return 'Brown';
-      // Dark warm desaturated -> Brown (ICtCp ensures accuracy in shadows)
-      if (ictcpBrightness < 0.55 || L < 0.55) return 'Brown';
+    const isWarmHue = Number.isFinite(normalizedHue) && normalizedHue >= 20 && normalizedHue <= 80;
+    if (isWarmHue && L >= 0.25 && L <= 0.55 && effectiveChroma < 0.14) return 'Brown';
+
+    if ((normalizedHue >= 345 || normalizedHue < 20) && L >= 0.65 && L <= 0.95 && effectiveChroma < 0.2) {
+      if (ptMag < 0.05 || Ipt > 0.6) return 'Pink';
     }
 
-    // Pink vs Red using OKLCH.h + IPT for light pink detection
-    // Pink: higher lightness, lower chroma, IPT helps identify pastels
-    if ((h >= 345 || h < 20)) {
-      // IPT helps detect light pink, peach - low P/T with high I
-      if ((L > 0.65 && effectiveChroma < 0.15) || (ptMag < 0.05 && Ipt > 0.6)) return 'Pink';
-      return 'Red';
-    }
-
-    // Orange vs Yellow using OKLCH.h precision
-    // Refined boundaries: Orange (20-50), Yellow transition (50-70), Yellow (70-100)
-    if (h >= 20 && h < 50) return 'Orange';
-    if (h >= 50 && h < 70) {
-      // Transition zone: use chroma to distinguish (Orange is more saturated)
-      return effectiveChroma > 0.12 ? 'Orange' : 'Yellow';
-    }
-    if (h >= 70 && h < 100) return 'Yellow';
-
-    // Green vs Yellow - OKLCH.h boundary
-    if (h >= 100 && h < 180) return 'Green';
-
-    // Blue vs Violet - OKLCH.h precision
-    // Blue (180-250), Violet transition (250-260), Violet (260-320)
-    if (h >= 180 && h < 250) return 'Blue';
-    if (h >= 250 && h < 260) {
-      // Transition: use ICtCp for better discrimination under varied lighting
-      return Math.abs(Ct || 0) > 0.08 ? 'Blue' : 'Violet';
-    }
-    if (h >= 260 && h < 320) return 'Violet';
-    
-    // Pink vs Violet for pastels (320-345) - IPT excels here for light pink, pale violet
-    if (h >= 320 && h < 345) {
-      // IPT helps identify light pink and pale violet pastels
+    if (normalizedHue >= 345 || normalizedHue < 20) return 'Red';
+    if (normalizedHue >= 20 && normalizedHue < 50) return 'Orange';
+    if (normalizedHue >= 50 && normalizedHue < 70) return effectiveChroma > 0.12 ? 'Orange' : 'Yellow';
+    if (normalizedHue >= 70 && normalizedHue < 100) return 'Yellow';
+    if (normalizedHue >= 100 && normalizedHue < 180) return 'Green';
+    if (normalizedHue >= 180 && normalizedHue < 250) return 'Blue';
+    if (normalizedHue >= 250 && normalizedHue < 260) return Math.abs(Ct || 0) > 0.08 ? 'Blue' : 'Violet';
+    if (normalizedHue >= 260 && normalizedHue < 320) return 'Violet';
+    if (normalizedHue >= 320 && normalizedHue < 345) {
       if ((L > 0.65 && effectiveChroma < 0.12) || (ptMag < 0.04 && Ipt > 0.65)) return 'Pink';
       return 'Violet';
     }
 
-    // Default to Gray if nothing matches (with ICtCp validation)
-    if (effectiveChroma <= 0.05 && Math.abs(Cp || 0) < 0.02) return 'Gray';
+    if (allowNeutralClassification && effectiveChroma < 0.05) return 'Gray';
     return 'Gray';
   }
 
@@ -229,12 +205,48 @@ export function findClosestColor(detectedRGB: number[], topN = 3): MatchResult {
   const Cp = Number(ictcpCoords[2] || 0);
   const classifiedFamily = classifyFamily(L, C, h, Ipt, P, T, I_ictcp, Ct, Cp);
 
+  const detectedHex = normalizeHex(
+    detectedRGB.map((v) => v.toString(16).padStart(2, '0')).join('')
+  );
+  const normalizeFamilyLabel = (value?: string) => (value || '').trim().toLowerCase();
+  const classifiedFamilyKey = normalizeFamilyLabel(classifiedFamily);
+  const topMatch = results[0];
+  let displayMatch = topMatch;
+
+  if (classifiedFamilyKey && topMatch) {
+    const topFamilyKey = normalizeFamilyLabel(topMatch.family || topMatch.name);
+    if (topFamilyKey !== classifiedFamilyKey) {
+      const aligned = results.find(
+        (row) => normalizeFamilyLabel(row.family || row.name) === classifiedFamilyKey
+      );
+      if (aligned) {
+        displayMatch = aligned;
+      } else {
+        displayMatch = {
+          ...topMatch,
+          name: classifiedFamily,
+          hex: detectedHex,
+        };
+      }
+    }
+  }
+
   const output: MatchResult = {
     detected_color_rgb: detectedRGB,
-    detected_color_hex: normalizeHex(
-      detectedRGB.map((v) => v.toString(16).padStart(2, '0')).join('')
-    ),
-    closest_match: { ...results[0], family: classifiedFamily },
+    detected_color_hex: detectedHex,
+    closest_match: displayMatch
+      ? {
+          ...displayMatch,
+          hex: normalizeHex(displayMatch.hex),
+          family: classifiedFamily,
+        }
+      : {
+          name: classifiedFamily,
+          hex: detectedHex,
+          family: classifiedFamily,
+          deltaE: 0,
+          confidence: 100,
+        },
     alternatives: results.slice(1, topN),
   };
 
